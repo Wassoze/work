@@ -10,7 +10,9 @@ from pathlib import Path
 from rich.console import Console
 
 from book_writer.agents import AgentClient
+from book_writer.models import Outline
 from book_writer.orchestrator import BookWriter
+from book_writer.stub_client import StubClient
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,7 +20,11 @@ def main(argv: list[str] | None = None) -> int:
         prog="book-writer",
         description="Multi-agent AI book writer (architect → writer → editor → proofreader).",
     )
-    parser.add_argument("--premise", required=True, help="One- or two-sentence premise of the book.")
+    parser.add_argument(
+        "--premise",
+        default="",
+        help="One- or two-sentence premise of the book. Required unless --resume-from-outline is set.",
+    )
     parser.add_argument("--genre", default="literary fiction", help="Genre.")
     parser.add_argument("--chapters", type=int, default=8, help="Number of chapters to plan.")
     parser.add_argument("--style", default="", help="Optional style guidance.")
@@ -38,12 +44,28 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional path to also write the outline as JSON.",
     )
+    parser.add_argument(
+        "--resume-from-outline",
+        type=Path,
+        default=None,
+        help="Skip the architect step; load an existing outline JSON file instead.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Use a stub client (no API calls). Useful for testing the pipeline.",
+    )
     args = parser.parse_args(argv)
+
+    if not args.premise and not args.resume_from_outline:
+        parser.error("--premise is required unless --resume-from-outline is provided")
 
     console = Console(stderr=True)
 
+    client = StubClient(num_chapters=args.chapters) if args.dry_run else AgentClient()
+
     writer = BookWriter(
-        client=AgentClient(),
+        client=client,
         target_chapter_words=args.words_per_chapter,
         language=args.language,
         enable_editor=not args.no_editor,
@@ -51,11 +73,22 @@ def main(argv: list[str] | None = None) -> int:
         progress=lambda msg: console.print(f"[dim]·[/dim] {msg}"),
     )
 
+    existing_outline = None
+    if args.resume_from_outline:
+        existing_outline = Outline(
+            **json.loads(args.resume_from_outline.read_text(encoding="utf-8"))
+        )
+        console.print(
+            f"[cyan]i[/cyan] resuming from outline [bold]{args.resume_from_outline}[/bold] "
+            f"({len(existing_outline.chapters)} chapters)"
+        )
+
     book = writer.write(
         premise=args.premise,
         genre=args.genre,
         num_chapters=args.chapters,
         style=args.style,
+        outline=existing_outline,
     )
 
     args.out.write_text(book.to_markdown(), encoding="utf-8")

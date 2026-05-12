@@ -44,6 +44,17 @@ Useful flags:
 - `--language French` (or any language — the agents write in it natively)
 - `--style "noir, terse, present tense"`
 - `--no-editor` / `--no-proofread` to skip passes for a faster/cheaper draft
+- `--resume-from-outline path/to/outline.json` to skip the architect step and iterate on chapters with the same plan
+- `--dry-run` runs the whole pipeline against a stub client (no API calls) — useful for wiring and CI
+
+## Tests
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+All tests use the bundled `StubClient`, so they run without an API key.
 
 ## MCP server — use the agents as tools
 
