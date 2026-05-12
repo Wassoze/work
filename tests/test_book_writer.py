@@ -48,6 +48,61 @@ def test_pipeline_can_resume_from_outline():
     assert book.outline.title == "Stub Title"
 
 
+def test_style_samples_trigger_analyzer_and_inject_profile():
+    seen_systems: list[str] = []
+
+    class TracingStub(StubClient):
+        def complete(self, *, model, system, messages, **kw):
+            text = system if isinstance(system, str) else "".join(
+                b.get("text", "") for b in system
+            )
+            seen_systems.append(text)
+            return super().complete(model=model, system=system, messages=messages, **kw)
+
+    writer = BookWriter(client=TracingStub(num_chapters=1))
+    writer.write(
+        premise="anything",
+        genre="stub",
+        num_chapters=1,
+        style_samples=["My terse little voice. Short. Like that."],
+    )
+
+    # Analyzer ran exactly once.
+    analyzer_calls = [s for s in seen_systems if "STYLE ANALYZER" in s]
+    assert len(analyzer_calls) == 1
+
+    # Writer + editor system prompts carry the derived profile.
+    writer_systems = [s for s in seen_systems if "WRITER agent" in s]
+    editor_systems = [s for s in seen_systems if "EDITOR agent" in s]
+    assert writer_systems and all("STUB STYLE PROFILE" in s for s in writer_systems)
+    assert editor_systems and all("STUB STYLE PROFILE" in s for s in editor_systems)
+
+
+def test_explicit_style_profile_skips_analyzer():
+    seen_systems: list[str] = []
+
+    class TracingStub(StubClient):
+        def complete(self, *, model, system, messages, **kw):
+            text = system if isinstance(system, str) else "".join(
+                b.get("text", "") for b in system
+            )
+            seen_systems.append(text)
+            return super().complete(model=model, system=system, messages=messages, **kw)
+
+    writer = BookWriter(
+        client=TracingStub(num_chapters=1),
+        style_profile="MY HAND-WRITTEN PROFILE",
+    )
+    writer.write(
+        premise="anything",
+        genre="stub",
+        num_chapters=1,
+        style_samples=["this should be ignored — profile already set"],
+    )
+    assert not any("STYLE ANALYZER" in s for s in seen_systems)
+    assert any("MY HAND-WRITTEN PROFILE" in s for s in seen_systems if "WRITER agent" in s)
+
+
 def test_pipeline_skips_editor_and_proofreader_when_disabled():
     calls: list[str] = []
 

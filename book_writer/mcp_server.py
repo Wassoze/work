@@ -27,6 +27,7 @@ from book_writer.agents import (
     run_architect,
     run_editor,
     run_proofreader,
+    run_style_analyzer,
     run_summarizer,
     run_writer,
 )
@@ -62,17 +63,31 @@ def create_outline(
 
 
 @mcp.tool()
+def analyze_style(samples: list[str]) -> str:
+    """Style analyzer agent: turn the user's past writing samples into a reusable
+    style profile (voice, rhythm, diction, dialogue habits, signature moves).
+
+    Pass the resulting string as `style_profile` to `write_chapter`,
+    `edit_chapter`, or `write_book` to make the writer/editor imitate this voice.
+    """
+    return run_style_analyzer(_client, samples=samples)
+
+
+@mcp.tool()
 def write_chapter(
     outline: dict[str, Any],
     chapter_index: int,
     previous_summaries: list[str] | None = None,
     target_words: int = 1500,
     language: str = "English",
+    style_profile: str | None = None,
 ) -> str:
     """Writer agent: draft a single chapter from an outline.
 
     `chapter_index` is zero-based. `previous_summaries` (optional) is a list of
     short summaries of the chapters already written, used for continuity.
+    `style_profile` (optional) is the output of `analyze_style` — if given, the
+    writer will imitate that voice.
     """
     o = Outline(**outline)
     return run_writer(
@@ -82,6 +97,7 @@ def write_chapter(
         previous_summaries=previous_summaries or [],
         target_words=target_words,
         language=language,
+        style_profile=style_profile,
     )
 
 
@@ -90,14 +106,20 @@ def edit_chapter(
     outline: dict[str, Any],
     chapter_index: int,
     draft: str,
+    style_profile: str | None = None,
 ) -> str:
-    """Editor agent: revise a draft chapter for prose quality and consistency."""
+    """Editor agent: revise a draft chapter for prose quality and consistency.
+
+    If `style_profile` is given (from `analyze_style`), the editor will revise
+    the prose toward that voice.
+    """
     o = Outline(**outline)
     return run_editor(
         _client,
         outline=o,
         chapter_plan=o.chapters[chapter_index],
         draft=draft,
+        style_profile=style_profile,
     )
 
 
@@ -123,9 +145,16 @@ def write_book(
     target_chapter_words: int = 1500,
     enable_editor: bool = True,
     enable_proofreader: bool = True,
+    style_samples: list[str] | None = None,
+    style_profile: str | None = None,
 ) -> str:
     """Orchestrator: run the full architect → writer → editor → proofreader pipeline
     and return the finished book as Markdown.
+
+    To imitate the user's own voice, pass either:
+      - `style_samples`: a list of the user's past writing excerpts (the
+        analyzer will derive a profile once at the start), OR
+      - `style_profile`: a pre-computed profile string (from `analyze_style`).
 
     Warning: this issues many model calls and can take several minutes for a
     full-length book.
@@ -136,12 +165,14 @@ def write_book(
         language=language,
         enable_editor=enable_editor,
         enable_proofreader=enable_proofreader,
+        style_profile=style_profile,
     )
     book = writer.write(
         premise=premise,
         genre=genre,
         num_chapters=num_chapters,
         style=style,
+        style_samples=style_samples,
     )
     return book.to_markdown()
 

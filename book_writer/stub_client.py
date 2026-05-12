@@ -12,10 +12,9 @@ from typing import Any
 
 from book_writer.agents import (
     ARCHITECT_SYSTEM,
-    EDITOR_SYSTEM_TEMPLATE,
     PROOFREADER_SYSTEM,
+    STYLE_ANALYZER_SYSTEM,
     SUMMARIZER_SYSTEM,
-    WRITER_SYSTEM_TEMPLATE,
 )
 
 
@@ -70,9 +69,11 @@ class StubClient:
 
         if ARCHITECT_SYSTEM in system_text:
             return json.dumps(_stub_outline(self.num_chapters))
-        if WRITER_SYSTEM_TEMPLATE.split("===")[0] in system_text:
+        if STYLE_ANALYZER_SYSTEM in system_text:
+            return "STUB STYLE PROFILE: short sentences; close third; wry."
+        if "WRITER agent" in system_text:
             return "Stub chapter prose. " * 20
-        if EDITOR_SYSTEM_TEMPLATE.split("===")[0] in system_text:
+        if "EDITOR agent" in system_text:
             user = messages[-1]["content"]
             return f"[edited] {user[-60:]}"
         if PROOFREADER_SYSTEM in system_text:

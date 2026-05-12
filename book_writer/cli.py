@@ -15,6 +15,22 @@ from book_writer.orchestrator import BookWriter
 from book_writer.stub_client import StubClient
 
 
+_SAMPLE_SUFFIXES = {".txt", ".md", ".markdown", ".rst"}
+
+
+def _collect_samples(
+    files: list[Path], directory: Path | None
+) -> list[str]:
+    paths: list[Path] = list(files)
+    if directory:
+        if not directory.is_dir():
+            raise SystemExit(f"--style-samples-dir not a directory: {directory}")
+        paths.extend(
+            p for p in sorted(directory.rglob("*")) if p.suffix.lower() in _SAMPLE_SUFFIXES
+        )
+    return [p.read_text(encoding="utf-8") for p in paths if p.is_file()]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="book-writer",
@@ -55,6 +71,33 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use a stub client (no API calls). Useful for testing the pipeline.",
     )
+    parser.add_argument(
+        "--style-sample",
+        type=Path,
+        action="append",
+        default=[],
+        help="Path to a text file containing one of YOUR past writing samples. "
+        "Repeat the flag for multiple samples. The style analyzer will derive a "
+        "profile and the writer/editor will imitate it.",
+    )
+    parser.add_argument(
+        "--style-samples-dir",
+        type=Path,
+        default=None,
+        help="Directory containing .txt/.md writing samples (read recursively).",
+    )
+    parser.add_argument(
+        "--style-profile",
+        type=Path,
+        default=None,
+        help="Path to a pre-computed style profile (skips the analyzer step).",
+    )
+    parser.add_argument(
+        "--save-style-profile",
+        type=Path,
+        default=None,
+        help="If set, save the derived style profile to this path for reuse.",
+    )
     args = parser.parse_args(argv)
 
     if not args.premise and not args.resume_from_outline:
@@ -82,6 +125,22 @@ def main(argv: list[str] | None = None) -> int:
             f"[cyan]i[/cyan] resuming from outline [bold]{args.resume_from_outline}[/bold] "
             f"({len(existing_outline.chapters)} chapters)"
         )
+
+    if args.style_profile:
+        writer.style_profile = args.style_profile.read_text(encoding="utf-8")
+        console.print(
+            f"[cyan]i[/cyan] loaded style profile from [bold]{args.style_profile}[/bold]"
+        )
+
+    samples = _collect_samples(args.style_sample, args.style_samples_dir)
+    if samples and not writer.style_profile:
+        console.print(f"[cyan]i[/cyan] learning style from {len(samples)} sample(s)")
+        profile = writer.learn_style(samples)
+        if args.save_style_profile:
+            args.save_style_profile.write_text(profile, encoding="utf-8")
+            console.print(
+                f"[green]✓[/green] style profile saved to [bold]{args.save_style_profile}[/bold]"
+            )
 
     book = writer.write(
         premise=args.premise,

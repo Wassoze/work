@@ -23,6 +23,7 @@ ARCHITECT_MODEL = os.environ.get("BOOK_WRITER_ARCHITECT_MODEL", "claude-opus-4-7
 WRITER_MODEL = os.environ.get("BOOK_WRITER_WRITER_MODEL", "claude-sonnet-4-6")
 EDITOR_MODEL = os.environ.get("BOOK_WRITER_EDITOR_MODEL", "claude-sonnet-4-6")
 PROOFREADER_MODEL = os.environ.get("BOOK_WRITER_PROOFREADER_MODEL", "claude-haiku-4-5-20251001")
+STYLE_ANALYZER_MODEL = os.environ.get("BOOK_WRITER_STYLE_MODEL", "claude-sonnet-4-6")
 
 
 def _extract_json(text: str) -> str:
@@ -130,6 +131,53 @@ def run_architect(
     return Outline(**data)
 
 
+# ----- Style analyzer --------------------------------------------------------
+
+STYLE_ANALYZER_SYSTEM = """You are the STYLE ANALYZER agent.
+You receive one or more prose excerpts written by the user and produce a
+concise style profile that another writer agent will imitate.
+
+The profile must cover:
+- VOICE: narrative stance, persona, distance from characters
+- SENTENCE STRUCTURE: average length, common patterns, use of fragments
+- RHYTHM & PACING: how the prose moves; punctuation habits
+- DICTION: register, vocabulary level, recurring word choices or images
+- DIALOGUE: how it's tagged, punctuated, blended with action
+- TROPES & TICS: signature moves, motifs, things this author tends to do
+- WHAT TO AVOID: things this author conspicuously does NOT do
+
+Be specific and prescriptive — the profile will be used as instructions.
+Keep it under 400 words. Output the profile only, no preamble."""
+
+
+def run_style_analyzer(client: AgentClient, *, samples: list[str]) -> str:
+    """Turn user-provided writing samples into a reusable style profile."""
+    if not samples:
+        raise ValueError("at least one sample is required")
+    joined = "\n\n=== SAMPLE BREAK ===\n\n".join(s.strip() for s in samples if s.strip())
+    user = (
+        "Analyse the following excerpt(s) and produce the style profile.\n\n"
+        f"{joined}"
+    )
+    return client.complete(
+        model=STYLE_ANALYZER_MODEL,
+        system=STYLE_ANALYZER_SYSTEM,
+        messages=[{"role": "user", "content": user}],
+        max_tokens=1024,
+        temperature=0.3,
+    )
+
+
+def _style_block(style_profile: Optional[str]) -> str:
+    if not style_profile:
+        return ""
+    return (
+        "\n=== AUTHOR STYLE PROFILE (imitate closely) ===\n"
+        f"{style_profile.strip()}\n"
+        "=== END STYLE PROFILE ===\n"
+    )
+
+
 # ----- Writer ----------------------------------------------------------------
 
 WRITER_SYSTEM_TEMPLATE = """You are the WRITER agent on a novel-writing team.
@@ -140,8 +188,10 @@ Rules:
 - Show, don't tell. Use scene, dialogue, sensory detail.
 - Open the chapter with a hook; close it with momentum into the next.
 - Match the requested tone and style. No meta-commentary, no chapter recaps.
+- If an AUTHOR STYLE PROFILE is provided, your top priority is to imitate it —
+  voice, sentence rhythm, diction, dialogue habits — without copying phrases verbatim.
 - Output ONLY the chapter prose — no title line, no "Chapter N:" header.
-
+{style_block}
 === BOOK OUTLINE ===
 {brief}
 === END OUTLINE ===
@@ -156,11 +206,15 @@ def run_writer(
     previous_summaries: list[str],
     target_words: int = 1500,
     language: str = "English",
+    style_profile: Optional[str] = None,
 ) -> str:
     system = [
         {
             "type": "text",
-            "text": WRITER_SYSTEM_TEMPLATE.format(brief=outline.as_brief()),
+            "text": WRITER_SYSTEM_TEMPLATE.format(
+                brief=outline.as_brief(),
+                style_block=_style_block(style_profile),
+            ),
             "cache_control": {"type": "ephemeral"},
         }
     ]
@@ -195,9 +249,11 @@ more vivid, and more consistent with the outline.
 Rules:
 - Preserve the plot beats and POV. Do not invent new events.
 - Cut filler, clichés, and weak verbs. Strengthen imagery and dialogue.
-- Keep the author's voice if it is distinctive; otherwise polish toward the requested tone.
+- If an AUTHOR STYLE PROFILE is provided, revise the prose to fit it more
+  closely — voice, rhythm, dialogue habits — without copying phrases verbatim.
+- Otherwise, polish toward the outline's requested tone.
 - Output ONLY the revised chapter prose — no notes, no diff markers.
-
+{style_block}
 === BOOK OUTLINE ===
 {brief}
 === END OUTLINE ===
@@ -210,11 +266,15 @@ def run_editor(
     outline: Outline,
     chapter_plan: ChapterPlan,
     draft: str,
+    style_profile: Optional[str] = None,
 ) -> str:
     system = [
         {
             "type": "text",
-            "text": EDITOR_SYSTEM_TEMPLATE.format(brief=outline.as_brief()),
+            "text": EDITOR_SYSTEM_TEMPLATE.format(
+                brief=outline.as_brief(),
+                style_block=_style_block(style_profile),
+            ),
             "cache_control": {"type": "ephemeral"},
         }
     ]
